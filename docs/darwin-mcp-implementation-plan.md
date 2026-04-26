@@ -41,10 +41,12 @@ to other integrations.
 dependencies at all. This phase is about the *framework*, not the domain.
 
 ### What you'll build
+
 A hardcoded "echo" MCP server with one tool: `echo_message`. It takes a string and returns it.
 Deliberately trivial — the point is observing the full MCP lifecycle.
 
 ### Key concepts introduced
+
 - What an MCP server actually is (a process that speaks JSON-RPC over stdio or SSE)
 - The `McpServerTool` attribute and how tools are discovered
 - How tool parameters become JSON Schema automatically
@@ -60,6 +62,7 @@ Deliberately trivial — the point is observing the full MCP lifecycle.
 6. Invoke `echo_message` from Claude Code and observe the raw JSON-RPC exchange in the logs
 
 ### Learning checkpoint
+
 Before moving on, you should be able to explain: what happens between Claude Code sending a
 `tools/call` request and your C# method returning a result. Look at the MCP spec's
 `tools/call` section and map it to what you see in the logs.
@@ -73,10 +76,12 @@ Good MCP tool design is a skill in itself — parameters that are too granular m
 hard for an LLM to use correctly; too broad and responses become unmanageably large.
 
 ### What you'll build
+
 The domain model: record types for `DepartureBoard`, `ServiceSummary`, `CallingPoint`, etc.,
 plus stub tool methods that return hardcoded sample data.
 
 ### Key concepts introduced
+
 - Thinking about MCP tools from the LLM's perspective (what does Claude actually need to know?)
 - The difference between a tool that returns raw API XML and one that returns a clean DTO
 - How `[Description]` attributes on tools and parameters become the schema Claude reads
@@ -98,6 +103,7 @@ plus stub tool methods that return hardcoded sample data.
 4. Test all four tools from Claude Code and refine the descriptions until Claude uses them correctly
 
 ### Learning checkpoint
+
 Ask Claude Code to answer: *"What time is the next train from Bedford to St Pancras?"* using
 only your stub tools. If Claude struggles to pick the right tool or interpret the response,
 adjust descriptions and structure before touching the real API.
@@ -110,10 +116,12 @@ adjust descriptions and structure before touching the real API.
 with your MCP tools. Isolate the API complexity in a separate layer.
 
 ### What you'll build
+
 A standalone `DarwinClient` class (no MCP involvement yet) that calls the real API and
 prints results to the console.
 
 ### Key concepts introduced
+
 - How .NET handles SOAP via `HttpClient` + `XDocument` (preferred over adding a WCF service
   reference, which generates verbose scaffolding)
 - SOAP envelope structure: how to construct a request and navigate the response namespace
@@ -152,6 +160,7 @@ prints results to the console.
 ```
 
 ### Learning checkpoint
+
 Print the raw XML response to console for a real station pair. Identify where the NRCC
 messages live versus the individual service elements. This mental map of the XML structure
 will make the deserialization code much easier to write correctly.
@@ -164,6 +173,7 @@ will make the deserialization code much easier to write correctly.
 gracefully — the LLM will see whatever you return, including your error messages.
 
 ### Key concepts introduced
+
 - The `IServiceProvider` / DI pattern in MCP server setup (injecting `DarwinClient` into tools)
 - What MCP tools should return when an API call fails (a useful natural-language error, not
   an unhandled exception)
@@ -211,6 +221,7 @@ public async Task<string> GetDepartures(string fromCrs, string? toCrs = null, in
 secrets management and configuration that you'll reuse in other MCP servers.
 
 ### Key concepts introduced
+
 - Using `IConfiguration` and `appsettings.json` (with user secrets for the Darwin token)
 - Structured logging in a stdio MCP server (you cannot log to stdout — use stderr or a file)
 - Adding a `CLAUDE.md` so Claude Code understands the server's capabilities and limitations
@@ -218,9 +229,11 @@ secrets management and configuration that you'll reuse in other MCP servers.
 ### Steps
 
 1. Move the Darwin token to `dotnet user-secrets` (never commit it):
+
    ```
    dotnet user-secrets set "Darwin:Token" "your-token-here"
    ```
+
 2. Read config via `IConfiguration` injected at startup
 3. Add `Microsoft.Extensions.Logging` with a file sink (e.g. `Serilog`) — stdio must stay
    clean for MCP JSON-RPC traffic
