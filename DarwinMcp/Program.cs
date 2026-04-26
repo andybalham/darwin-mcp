@@ -29,10 +29,17 @@ builder.Services
     // responses to stdout, one message per line. Client (Claude Code) spawns
     // this process and pipes to it. Process exits when stdin closes.
     .WithStdioServerTransport()
-    // Reflection-scans EchoTool for [McpServerTool] methods and registers each
-    // as a callable tool. Method signature → JSON Schema for the tool's input.
-    // PascalCase method names auto-convert to snake_case (EchoMessage → echo_message).
-    .WithTools<EchoTool>();
+    // Reflection-scans each tool class for [McpServerTool] methods and registers
+    // them. Method signature → JSON Schema for the tool's input. PascalCase
+    // method names auto-convert to snake_case (GetDepartures → get_departures).
+    //
+    // EchoTool stays for now as a sanity check — drop it in Phase 5 cleanup.
+    // Phase 2 stubs return hardcoded sample data; Phase 4 wires in DarwinClient.
+    .WithTools<EchoTool>()
+    .WithTools<DeparturesTool>()
+    .WithTools<ServiceDetailsTool>()
+    .WithTools<DisruptionsTool>()
+    .WithTools<StationLookupTool>();
 
 // Blocks until stdin closes or Ctrl+C. Hosted service handles the protocol loop.
 await builder.Build().RunAsync();
