@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "darwin": {
+      "command": "dotnet",
+      "args": ["run", "--project", "DarwinMcp"]
+    }
+  }
+}

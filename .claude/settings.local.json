@@ -3,5 +3,8 @@
     "allow": [
       "Bash(dotnet build:*)"
     ]
-  }
+  },
+  "enabledMcpjsonServers": [
+    "darwin"
+  ]
 }
