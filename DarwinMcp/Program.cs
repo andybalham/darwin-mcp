@@ -1,7 +1,21 @@
+using DarwinMcp.Darwin;
 using DarwinMcp.Tools;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+
+// Phase 3 scratch harness — kept separate from MCP wiring per the plan.
+// Invocation:
+//   dotnet run -- --probe BDM           (all departures from Bedford)
+//   dotnet run -- --probe BDM STP       (Bedford → St Pancras filter)
+// Token comes from env var DARWIN_TOKEN (Phase 5 will move to user-secrets).
+// Writes to stderr — never stdout, so behaviour stays consistent with the
+// MCP-mode "stdout is JSON-RPC only" rule even though MCP isn't running here.
+if (args.Length >= 2 && args[0] == "--probe")
+{
+    await RunProbe(args);
+    return;
+}
 
 // Generic .NET host — gives us DI, configuration, logging, and graceful shutdown.
 // MCP server runs as a hosted service inside it.
@@ -43,3 +57,52 @@ builder.Services
 
 // Blocks until stdin closes or Ctrl+C. Hosted service handles the protocol loop.
 await builder.Build().RunAsync();
+return;
+
+// Local function so the probe path stays out of the MCP host's lifetime.
+static async Task RunProbe(string[] args)
+{
+    var token = Environment.GetEnvironmentVariable("DARWIN_TOKEN");
+    if (string.IsNullOrWhiteSpace(token))
+    {
+        await Console.Error.WriteLineAsync("DARWIN_TOKEN env var not set. Get a free token at https://opendata.nationalrail.co.uk/");
+        Environment.ExitCode = 2;
+        return;
+    }
+
+    var fromCrs = args[1].ToUpperInvariant();
+    var toCrs = args.Length >= 3 ? args[2].ToUpperInvariant() : null;
+
+    using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
+    var client = new DarwinClient(http, token);
+
+    try
+    {
+        var board = await client.GetDepartureBoardAsync(fromCrs, toCrs, numRows: 10);
+        await Console.Error.WriteLineAsync($"=== {board.StationName} ({board.Crs}) @ {board.GeneratedAt} ===");
+        foreach (var s in board.Services)
+        {
+            await Console.Error.WriteLineAsync(
+                $"{s.ScheduledDeparture}  {(s.EstimatedDeparture ?? "-"),-10}  plat {s.Platform ?? "?"}  " +
+                $"{s.Operator,-20}  {s.Origin} → {s.Destination}" +
+                (s.IsCancelled ? "  [CANCELLED]" : "") +
+                (s.DelayReason is null ? "" : $"  ({s.DelayReason})"));
+        }
+        if (board.Messages.Count > 0)
+        {
+            await Console.Error.WriteLineAsync("--- NRCC ---");
+            foreach (var m in board.Messages)
+                await Console.Error.WriteLineAsync($"[sev {m.Severity}] {m.Message}");
+        }
+    }
+    catch (DarwinApiException ex)
+    {
+        await Console.Error.WriteLineAsync($"Darwin error: {ex.Message}");
+        Environment.ExitCode = 1;
+    }
+    catch (HttpRequestException ex)
+    {
+        await Console.Error.WriteLineAsync($"Network error: {ex.Message}");
+        Environment.ExitCode = 1;
+    }
+}

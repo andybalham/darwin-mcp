@@ -6,7 +6,7 @@ Tracks progress against [darwin-mcp-implementation-plan.md](./darwin-mcp-impleme
 |---|---|---|
 | 1 — MCP server fundamentals | ✅ Complete | Echo tool live, verified via Claude Code |
 | 2 — Domain model + tool stubs | ✅ Complete | 4 stub tools + DTOs registered |
-| 3 — Darwin SOAP client | ⏳ Not started | |
+| 3 — Darwin SOAP client | ✅ Complete | `DarwinClient` + `--probe` harness; not yet wired into MCP tools |
 | 4 — Wire real API to tools | ⏳ Not started | |
 | 5 — Config, secrets, polish | ⏳ Not started | |
 | 6 — Stretch goals | ⏳ Not started | |
@@ -72,6 +72,38 @@ Tracks progress against [darwin-mcp-implementation-plan.md](./darwin-mcp-impleme
 
 ---
 
-## Phase 3 — Next up
+## Phase 3 — Complete
 
-Stand-alone `DarwinClient` with raw `HttpClient` + `XDocument` against real Darwin SOAP. No MCP wiring yet — scratch harness in `Program.cs` (or separate test project) to dump real XML responses.
+**Built:**
+
+- `Darwin/DarwinApiException.cs` — single typed exception for SOAP fault, HTTP non-success, and parse failure paths
+- `Darwin/SoapEnvelopes.cs` — hand-built envelope strings, `SecurityElement.Escape` on every interpolated value, optional `filterCrs` element
+- `Darwin/DarwinClient.cs` — `HttpClient` POST against `lite.realtime.nationalrail.co.uk/OpenLDBWS/ldb12.asmx`, parses response with `XDocument` + local-name navigation
+- `Program.cs` — `--probe <fromCrs> [toCrs]` mode: skips MCP host, dumps parsed `DepartureBoard` to **stderr** (stdout-clean rule still honoured), reads token from `DARWIN_TOKEN` env var
+
+**Design decisions:**
+
+- No WCF / svcutil proxy — every byte on the wire stays visible (per plan's learning goal)
+- Outer wrapper navigated by pinned `ldb` namespace; inner `lt*` typed elements navigated by local name to stay tolerant of Darwin minor-version namespace bumps
+- Origin/destination: take first `<location>` only (joined services list multiple) — keeps board compact
+- NRCC severity read from child element first, then attribute fallback — schema versions disagree on placement
+- SOAP fault extraction on non-2xx: parse body, surface `faultstring` instead of bare HTTP status
+- Times kept as raw strings (matches Phase 2 decision — Darwin returns "On time" / HH:mm mixed forms)
+- Token via env var for Phase 3 only; Phase 5 moves to `dotnet user-secrets`
+
+**Verified:**
+
+- Compile clean (file-lock copy error only — running MCP server holds `DarwinMcp.exe`, identical to Phase 2)
+- Pending: live `--probe BDM STP` run with real token to confirm parse paths match actual Darwin payload
+
+**Open questions for next phase:**
+
+- `serviceID` vs `rid` — Darwin returns both; confirm which `GetServiceDetails` actually wants
+- Are there services where `std`/`etd` are absent (e.g. arrivals-only)? May need null guards rather than `?? string.Empty`
+- NRCC `Message` body is HTML in some feeds — strip tags before returning to LLM, or pass through?
+
+---
+
+## Phase 4 — Next up
+
+Replace stub returns in `Tools/*` with `DarwinClient` calls via constructor injection. Register `DarwinClient` (+ `HttpClient`) in DI. Wrap calls in try/catch returning LLM-friendly error strings. Wire `lookup_station` to bundled `Data/stations.csv`.
