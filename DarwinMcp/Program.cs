@@ -5,6 +5,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Serilog;
 
 // Phase 3 scratch harness — kept separate from MCP wiring per the plan.
 // Invocation:
@@ -27,11 +28,29 @@ var builder = Host.CreateApplicationBuilder(args);
 // Production, so wire explicitly to pick up `dotnet user-secrets set Darwin:Token`.
 builder.Configuration.AddUserSecrets<Program>(optional: true);
 
+// appsettings.json lives next to the binary (CopyToOutputDirectory). Default
+// host already loads it from current working directory, but Claude Code may
+// spawn us with a different CWD — load explicitly from BaseDirectory too.
+builder.Configuration.AddJsonFile(
+    Path.Combine(AppContext.BaseDirectory, "appsettings.json"),
+    optional: true,
+    reloadOnChange: false);
+
 // CRITICAL for stdio MCP: stdout is reserved exclusively for JSON-RPC traffic.
 // Default host adds a console logger that writes to stdout — that would corrupt
-// the protocol stream and the client would see garbled JSON. Clear all providers.
-// (Phase 5 will re-add a Serilog file sink so we can still see logs.)
+// the protocol stream and the client would see garbled JSON. Clear all providers
+// then attach Serilog reading config from appsettings.json (file sink only — no
+// console sink configured, so stdout stays clean).
 builder.Logging.ClearProviders();
+
+// Resolve relative log paths against BaseDirectory so logs land next to the
+// binary regardless of CWD.
+Directory.SetCurrentDirectory(AppContext.BaseDirectory);
+
+Log.Logger = new LoggerConfiguration()
+    .ReadFrom.Configuration(builder.Configuration)
+    .CreateLogger();
+builder.Logging.AddSerilog(Log.Logger, dispose: true);
 
 // Phase 4 DI wiring.
 //
@@ -88,10 +107,8 @@ builder.Services
     // them. Method signature → JSON Schema for the tool's input. PascalCase
     // method names auto-convert to snake_case (GetDepartures → get_departures).
     //
-    // EchoTool stays for now as a sanity check — drop it in Phase 5 cleanup.
-    // Phase 4: tool classes now depend on DarwinClient / StationLookup via
-    // constructor injection (the SDK resolves them through IServiceProvider).
-    .WithTools<EchoTool>()
+    // Tool classes depend on DarwinClient / StationLookup via constructor
+    // injection (the SDK resolves them through IServiceProvider).
     .WithTools<DeparturesTool>()
     .WithTools<ServiceDetailsTool>()
     .WithTools<DisruptionsTool>()
