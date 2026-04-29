@@ -1,5 +1,7 @@
 using DarwinMcp.Darwin;
+using DarwinMcp.Data;
 using DarwinMcp.Tools;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -21,11 +23,50 @@ if (args.Length >= 2 && args[0] == "--probe")
 // MCP server runs as a hosted service inside it.
 var builder = Host.CreateApplicationBuilder(args);
 
+// User-secrets only loaded by default in Development env; MCP launches as
+// Production, so wire explicitly to pick up `dotnet user-secrets set Darwin:Token`.
+builder.Configuration.AddUserSecrets<Program>(optional: true);
+
 // CRITICAL for stdio MCP: stdout is reserved exclusively for JSON-RPC traffic.
 // Default host adds a console logger that writes to stdout — that would corrupt
 // the protocol stream and the client would see garbled JSON. Clear all providers.
 // (Phase 5 will re-add a Serilog file sink so we can still see logs.)
 builder.Logging.ClearProviders();
+
+// Phase 4 DI wiring.
+//
+// Token resolution (in order):
+//   1. Configuration "Darwin:Token" — picks up appsettings.json + env
+//      vars (DOTNET prefix strips to "Darwin__Token") + user-secrets when
+//      Phase 5 enables them.
+//   2. Bare DARWIN_TOKEN env var — kept for parity with the Phase 3 probe.
+// If neither is set we let DarwinClient be constructed with an empty
+// token; the first SOAP call will fail with a clear Darwin auth error
+// rather than crashing at startup. That keeps `tools/list` working so the
+// MCP client can still introspect the server before a token is provided.
+var darwinToken = builder.Configuration["Darwin:Token"]
+                  ?? Environment.GetEnvironmentVariable("DARWIN_TOKEN")
+                  ?? string.Empty;
+
+// Named HttpClient for DarwinClient. AddHttpClient gives us pooled
+// connection reuse via IHttpClientFactory and avoids the classic
+// "new HttpClient per call" socket-exhaustion trap.
+builder.Services.AddHttpClient("darwin", c =>
+{
+    c.Timeout = TimeSpan.FromSeconds(15);
+});
+// DarwinClient is a singleton — it holds no per-request state and its
+// HttpClient is sourced from the factory each call (factory itself is
+// thread-safe and pools HttpMessageHandlers internally).
+builder.Services.AddSingleton<DarwinClient>(sp =>
+{
+    var http = sp.GetRequiredService<IHttpClientFactory>().CreateClient("darwin");
+    return new DarwinClient(http, darwinToken);
+});
+
+// Station lookup is stateless after construction — singleton avoids
+// re-reading stations.csv on every tool call.
+builder.Services.AddSingleton<StationLookup>();
 
 builder.Services
     // Registers the MCP server, its request handlers, and a hosted service
@@ -48,7 +89,8 @@ builder.Services
     // method names auto-convert to snake_case (GetDepartures → get_departures).
     //
     // EchoTool stays for now as a sanity check — drop it in Phase 5 cleanup.
-    // Phase 2 stubs return hardcoded sample data; Phase 4 wires in DarwinClient.
+    // Phase 4: tool classes now depend on DarwinClient / StationLookup via
+    // constructor injection (the SDK resolves them through IServiceProvider).
     .WithTools<EchoTool>()
     .WithTools<DeparturesTool>()
     .WithTools<ServiceDetailsTool>()

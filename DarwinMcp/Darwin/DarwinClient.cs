@@ -43,8 +43,19 @@ public sealed class DarwinClient
         CancellationToken ct = default)
     {
         var envelope = SoapEnvelopes.GetDepartureBoard(_token, fromCrs, toCrs, numRows);
-        var xml = await PostAsync(envelope, soapAction: "http://thalesgroup.com/RTTI/2021-11-01/ldb/GetDepartureBoard", ct);
+        var xml = await PostAsync(envelope, soapAction: "http://thalesgroup.com/RTTI/2012-01-13/ldb/GetDepartureBoard", ct);
         return ParseDepartureBoard(xml, fromCrs);
+    }
+
+    // Drill into a single service. ServiceId is the opaque token from
+    // GetDepartureBoard's <serviceID> element.
+    public async Task<ServiceDetails> GetServiceDetailsAsync(
+        string serviceId,
+        CancellationToken ct = default)
+    {
+        var envelope = SoapEnvelopes.GetServiceDetails(_token, serviceId);
+        var xml = await PostAsync(envelope, soapAction: "http://thalesgroup.com/RTTI/2012-01-13/ldb/GetServiceDetails", ct);
+        return ParseServiceDetails(xml, serviceId);
     }
 
     // Single POST helper. SOAP 1.1 expects:
@@ -164,6 +175,101 @@ public sealed class DarwinClient
             GeneratedAt: generatedAt,
             Services: services,
             Messages: messages);
+    }
+
+    // Shape of GetServiceDetailsResponse (abbreviated):
+    //
+    //   ldb:GetServiceDetailsResponse/
+    //     ldb:GetServiceDetailsResult/
+    //       lt4:generatedAt
+    //       lt4:serviceType / lt4:locationName / lt4:crs
+    //       lt4:operator / lt4:platform
+    //       lt4:sta / lt4:eta / lt4:std / lt4:etd
+    //       lt4:delayReason / lt4:isCancelled
+    //       lt7:previousCallingPoints/lt7:callingPointList/lt7:callingPoint[]
+    //       lt7:subsequentCallingPoints/lt7:callingPointList/lt7:callingPoint[]
+    //         lt7:locationName / lt7:crs / lt7:st / lt7:et / lt7:at
+    //
+    // For a board-driven query (departures from origin), Darwin only fills
+    // subsequentCallingPoints. We concatenate previous (if present) + the
+    // origin row + subsequent so the LLM gets a single ordered list.
+    private static ServiceDetails ParseServiceDetails(XDocument doc, string serviceId)
+    {
+        var result = doc.Descendants(Ldb + "GetServiceDetailsResult").FirstOrDefault()
+            ?? throw new DarwinApiException("Response missing GetServiceDetailsResult.");
+
+        string? Child(string name) => result.Elements().FirstOrDefault(e => e.Name.LocalName == name)?.Value;
+
+        var originName = Child("locationName") ?? string.Empty;
+        var originCrs = Child("crs") ?? string.Empty;
+        var op = Child("operator") ?? string.Empty;
+        var platform = Child("platform");
+        var std = Child("std") ?? string.Empty;
+        var etd = Child("etd");
+        var isCancelled = bool.TryParse(Child("isCancelled"), out var cancelled) && cancelled;
+        var delayReason = Child("delayReason");
+
+        // Build the calling points list. Darwin nests:
+        //   <subsequentCallingPoints>
+        //     <callingPointList>           ← may have multiple lists for joined/divided services
+        //       <callingPoint>...</callingPoint>
+        //     </callingPointList>
+        //   </subsequentCallingPoints>
+        // For a non-joined service we expect one list; we flatten all of them
+        // for safety.
+        IEnumerable<XElement> CallingPointsIn(string wrapper) =>
+            result.Elements()
+                  .Where(e => e.Name.LocalName == wrapper)
+                  .SelectMany(e => e.Elements().Where(x => x.Name.LocalName == "callingPointList"))
+                  .SelectMany(l => l.Elements().Where(c => c.Name.LocalName == "callingPoint"));
+
+        CallingPoint ToCp(XElement cp)
+        {
+            string? V(string n) => cp.Elements().FirstOrDefault(e => e.Name.LocalName == n)?.Value;
+            return new CallingPoint(
+                StationName: V("locationName") ?? string.Empty,
+                Crs: V("crs") ?? string.Empty,
+                ScheduledTime: V("st") ?? string.Empty,
+                EstimatedTime: V("et"),
+                ActualTime: V("at"));
+        }
+
+        var prev = CallingPointsIn("previousCallingPoints").Select(ToCp).ToList();
+        var subs = CallingPointsIn("subsequentCallingPoints").Select(ToCp).ToList();
+
+        // Synthesise a calling-point row for the origin itself so the LLM
+        // sees a single ordered through-route. The board query only knows
+        // scheduled/estimated departure (no `at`), which mirrors what Darwin
+        // exposes for a current-station row.
+        var originPoint = new CallingPoint(
+            StationName: originName,
+            Crs: originCrs,
+            ScheduledTime: std,
+            EstimatedTime: etd,
+            ActualTime: null);
+
+        var route = new List<CallingPoint>(prev.Count + 1 + subs.Count);
+        route.AddRange(prev);
+        route.Add(originPoint);
+        route.AddRange(subs);
+
+        // Origin/Destination labels: first calling point is the route origin,
+        // last is the destination — works for both forward (subsequent only)
+        // and through-train (with previous) cases.
+        var origin = route.Count > 0 ? route[0].StationName : originName;
+        var destination = route.Count > 0 ? route[^1].StationName : originName;
+
+        return new ServiceDetails(
+            ServiceId: serviceId,
+            Operator: op,
+            Origin: origin,
+            Destination: destination,
+            ScheduledDeparture: std,
+            EstimatedDeparture: etd,
+            Platform: platform,
+            IsCancelled: isCancelled,
+            DelayReason: delayReason,
+            CallingPoints: route);
     }
 
     private static ServiceSummary ParseService(XElement svc)

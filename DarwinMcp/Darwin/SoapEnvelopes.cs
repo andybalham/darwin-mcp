@@ -19,6 +19,31 @@ internal static class SoapEnvelopes
     public const string TokenNamespace = "http://thalesgroup.com/RTTI/2013-11-28/Token/types";
     public const string SoapNamespace = "http://schemas.xmlsoap.org/soap/envelope/";
 
+    // GetServiceDetailsRequest envelope. Single argument: the opaque
+    // serviceID returned by GetDepartureBoard. Darwin returns the full
+    // calling pattern, current ETA at each stop, and any delay reason.
+    public static string GetServiceDetails(string token, string serviceId)
+    {
+        var safeToken = SecurityElement.Escape(token);
+        var safeId = SecurityElement.Escape(serviceId);
+        return $"""
+        <soap:Envelope xmlns:soap="{SoapNamespace}"
+                       xmlns:typ="{TokenNamespace}"
+                       xmlns:ldb="{LdbNamespace}">
+          <soap:Header>
+            <typ:AccessToken>
+              <typ:TokenValue>{safeToken}</typ:TokenValue>
+            </typ:AccessToken>
+          </soap:Header>
+          <soap:Body>
+            <ldb:GetServiceDetailsRequest>
+              <ldb:serviceID>{safeId}</ldb:serviceID>
+            </ldb:GetServiceDetailsRequest>
+          </soap:Body>
+        </soap:Envelope>
+        """;
+    }
+
     // Build a GetDepartureBoardRequest envelope. filterCrs (toCrs) is optional;
     // when omitted Darwin returns all departures from the origin.
     public static string GetDepartureBoard(string token, string fromCrs, string? toCrs, int numRows)

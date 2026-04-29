@@ -7,7 +7,7 @@ Tracks progress against [darwin-mcp-implementation-plan.md](./darwin-mcp-impleme
 | 1 — MCP server fundamentals | ✅ Complete | Echo tool live, verified via Claude Code |
 | 2 — Domain model + tool stubs | ✅ Complete | 4 stub tools + DTOs registered |
 | 3 — Darwin SOAP client | ✅ Complete | `DarwinClient` + `--probe` harness; not yet wired into MCP tools |
-| 4 — Wire real API to tools | ⏳ Not started | |
+| 4 — Wire real API to tools | ✅ Complete | All four tools call real Darwin via DI; `stations.csv` bundled |
 | 5 — Config, secrets, polish | ⏳ Not started | |
 | 6 — Stretch goals | ⏳ Not started | |
 
@@ -104,6 +104,41 @@ Tracks progress against [darwin-mcp-implementation-plan.md](./darwin-mcp-impleme
 
 ---
 
-## Phase 4 — Next up
+## Phase 4 — Complete
 
-Replace stub returns in `Tools/*` with `DarwinClient` calls via constructor injection. Register `DarwinClient` (+ `HttpClient`) in DI. Wrap calls in try/catch returning LLM-friendly error strings. Wire `lookup_station` to bundled `Data/stations.csv`.
+**Built:**
+
+- `Darwin/SoapEnvelopes.cs` — added `GetServiceDetails` envelope builder (mirrors departure-board pattern, `SecurityElement.Escape` on `serviceID`)
+- `Darwin/DarwinClient.cs` — added `GetServiceDetailsAsync` + `ParseServiceDetails`; flattens `previousCallingPoints` + origin row + `subsequentCallingPoints` into a single ordered route
+- `Data/stations.csv` — ~95 common UK stations bundled as content (`CopyToOutputDirectory=PreserveNewest`)
+- `Data/StationLookup.cs` — singleton, loads CSV once from `AppContext.BaseDirectory`, ranks results prefix > contains, caps at 10
+- `Tools/*` — all four tools converted to instance classes with constructor injection (`DarwinClient` / `StationLookup`); CRS validated up front; try/catch around calls returns LLM-friendly strings for `DarwinApiException`, `HttpRequestException`, `TaskCanceledException`
+- `Tools/DisruptionsTool.cs` — calls `GetDepartureBoardAsync(crs, null, numRows: 1)` to pull NRCC cheaply (Darwin LDBWS lite has no messages-only endpoint)
+- `Program.cs` — DI registers named `HttpClient "darwin"` (15s timeout, factory-pooled), `DarwinClient` singleton with token from `Configuration["Darwin:Token"]` → `DARWIN_TOKEN` env var fallback, `StationLookup` singleton
+- `DarwinMcp.csproj` — added `Microsoft.Extensions.Http` 10.0.7 (for `AddHttpClient`/`IHttpClientFactory`); `<None Update="Data/stations.csv" CopyToOutputDirectory=PreserveNewest>`
+
+**Design decisions:**
+
+- Tools return `Task<object>` (DTO on success, `string` on error) rather than throwing — keeps the LLM's context unbroken when Darwin or the network fails, and lets the error message hint at next steps (`lookup_station`, retry, re-fetch board for expired serviceId)
+- Empty token tolerated at startup (logged as failure only on first SOAP call) so `tools/list` still succeeds before token is configured
+- `StationLookup` uses naive `LastIndexOf(',')` CSV split — fine while no station name contains a comma; bring in a parser package if that ever changes
+- `numRows` clamped 1–20 in `DeparturesTool` to keep responses LLM-sized and match Darwin's documented max
+- `HttpClient` lifetime managed by `IHttpClientFactory` (named client `"darwin"`) rather than constructed per-request — avoids socket exhaustion, avoids the singleton-stale-DNS problem
+- Probe path in `Program.cs` retained: still constructs `DarwinClient` directly so the MCP DI graph isn't required for raw API exploration
+
+**Verified:**
+
+- `dotnet build` clean (0 warnings, 0 errors)
+- Pending: live Claude Code call to confirm `tools/list` still shows 5 tools and a real `get_departures("BDM", "STP")` round-trips with a valid `Darwin:Token`
+
+**Open questions for next phase:**
+
+- Should `lookup_station` accept a `crs` parameter too (reverse lookup) for when the LLM wants to expand a code into a name?
+- Which stations to ship in `stations.csv` — current ~95 covers main InterCity + London terminals; full NR list is ~2,500. Embed full list, or keep curated subset?
+- Empty-token startup is permissive; Phase 5 should probably log a warning at startup when the token is missing rather than only failing on first call.
+
+---
+
+## Phase 5 — Next up
+
+Move token to `dotnet user-secrets`, add Serilog file sink (stdout still reserved for JSON-RPC), drop `EchoTool`, add `appsettings.json`, write `README.md`.

@@ -5,11 +5,23 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <UserSecretsId>7e1a6ace-6a7f-4437-a007-8524668280e0</UserSecretsId>
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Configuration.UserSecrets" Version="10.0.7" />
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.7" />
+    <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.7" />
     <PackageReference Include="ModelContextProtocol" Version="1.2.0" />
+  </ItemGroup>
+
+  <!-- Bundle the static CRS lookup table next to the binary so the
+       StationLookup service can read it from AppContext.BaseDirectory at
+       startup. PreserveNewest avoids unnecessary rebuild churn. -->
+  <ItemGroup>
+    <None Update="Data\stations.csv">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
   </ItemGroup>
 
 </Project>
