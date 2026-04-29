@@ -8,7 +8,7 @@ Tracks progress against [darwin-mcp-implementation-plan.md](./darwin-mcp-impleme
 | 2 — Domain model + tool stubs | ✅ Complete | 4 stub tools + DTOs registered |
 | 3 — Darwin SOAP client | ✅ Complete | `DarwinClient` + `--probe` harness; not yet wired into MCP tools |
 | 4 — Wire real API to tools | ✅ Complete | All four tools call real Darwin via DI; `stations.csv` bundled |
-| 5 — Config, secrets, polish | ⏳ Not started | |
+| 5 — Config, secrets, polish | ✅ Complete | User-secrets token, Serilog file sink, EchoTool dropped, appsettings + README |
 | 6 — Stretch goals | ⏳ Not started | |
 
 ---
@@ -139,6 +139,30 @@ Tracks progress against [darwin-mcp-implementation-plan.md](./darwin-mcp-impleme
 
 ---
 
-## Phase 5 — Next up
+## Phase 5 — Complete
 
-Move token to `dotnet user-secrets`, add Serilog file sink (stdout still reserved for JSON-RPC), drop `EchoTool`, add `appsettings.json`, write `README.md`.
+**Built:**
+
+- `appsettings.json` — Serilog config: file sink only, `logs/darwin-.log` daily rolling, 7-day retention, `Microsoft`/`HttpClient` overrides at Warning
+- `Program.cs` — explicit `AddJsonFile` from `AppContext.BaseDirectory` (Claude Code may spawn with different CWD); `Directory.SetCurrentDirectory(BaseDirectory)` so Serilog's relative `logs/` path resolves next to the binary; `Log.Logger = new LoggerConfiguration().ReadFrom.Configuration(...)`, attached via `AddSerilog(dispose: true)` after `ClearProviders()` — file sink only, stdout stays JSON-RPC clean
+- `Tools/EchoTool.cs` — deleted (Phase 1 sanity check no longer needed); registration removed from `Program.cs`
+- `DarwinMcp.csproj` — `Serilog.Extensions.Hosting` 10.0.0, `Serilog.Settings.Configuration` 10.0.0, `Serilog.Sinks.File` 7.0.0; `<None Update="appsettings.json" CopyToOutputDirectory=PreserveNewest>`
+- `README.md` (repo root) — tools table, CRS format, `dotnet user-secrets` setup, MCP client config snippet, logging path/rolling explained, probe-mode usage, limitations
+
+**Design decisions:**
+
+- Token stays in `dotnet user-secrets` (already wired in Phase 4 via `Configuration["Darwin:Token"]`); no startup change needed for Phase 5 — checkpoint just confirmed `AddUserSecrets<Program>` is loaded explicitly because MCP launches as Production env
+- Serilog config in `appsettings.json` rather than code so log levels can be tuned without rebuilding
+- File sink only — no console sink. Adding one would corrupt the JSON-RPC stream on stdout. README calls this out explicitly to prevent future regressions
+- `Directory.SetCurrentDirectory(BaseDirectory)` chosen over an absolute path in the sink config so logs follow the binary in any deployment layout
+- `CLAUDE.md` (repo root) already covers tool guide, CRS format, and Darwin limitations — left as-is, no duplication into README
+
+**Verified:**
+
+- `dotnet build` clean (0 warnings, 0 errors) after killing the running MCP server holding `DarwinMcp.exe` lock
+- Live Claude Code call after `/mcp` reconnect: `check_disruptions("PRE")` and `get_departures("PRE","CRL")` both round-trip — confirms Serilog wiring + dropped EchoTool didn't break the host
+
+**Open questions for next phase:**
+
+- Whether to add startup warning when `Darwin:Token` is empty (carry-over from Phase 4 — still permissive at startup)
+- Caching layer (`IMemoryCache`, ~60s TTL on departure boards) is the most useful Phase 6 stretch goal given iterative Claude conversations re-fetching the same board
