@@ -34,7 +34,9 @@ CRS codes are three-letter uppercase station identifiers (e.g. `BDM` Bedford, `S
 
 ## MCP client config
 
-Claude Code (`~/.claude.json` or workspace `.mcp.json`):
+### Claude Code
+
+`~/.claude.json` or workspace `.mcp.json`:
 
 ```json
 {
@@ -47,6 +49,40 @@ Claude Code (`~/.claude.json` or workspace `.mcp.json`):
   }
 }
 ```
+
+### Claude Desktop
+
+Edit the Claude Desktop config file:
+
+- Windows: `%APPDATA%\Claude\claude_desktop_config.json`
+- macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
+
+Add the same `mcpServers` entry as above, then restart Claude Desktop. Verify under Settings → Developer → MCP servers; the hammer icon in a chat lists registered tools.
+
+**Tips:**
+
+- `dotnet run` rebuilds on every launch — slow. For daily use, publish once and point `command` at the binary directly:
+
+  ```bash
+  dotnet publish -c Release
+  ```
+
+  ```json
+  "darwin": {
+    "command": "C:/path/to/darwin-mcp/DarwinMcp/bin/Release/net10.0/publish/DarwinMcp.exe"
+  }
+  ```
+
+- `dotnet user-secrets` only resolves when launched from the project directory. A published binary loses access — pass the token via env var instead:
+
+  ```json
+  "darwin": {
+    "command": "C:/path/to/publish/DarwinMcp.exe",
+    "env": { "DARWIN_TOKEN": "your-token" }
+  }
+  ```
+
+- Logs land at `<binary-dir>/logs/darwin-YYYYMMDD.log` — first stop if the server fails to register.
 
 ## Logging
 
